@@ -31,7 +31,7 @@ async function processDir(basePath: string, allProperties: Tree) {
     if(entryPath.isDirectory()){
       await processDir(joinedPath, allProperties)
     }else {
-      if(entryPath.path.endsWith(".md") || entryPath.path.endsWith(".mdx")){
+      if(joinedPath.endsWith(".md") || joinedPath.endsWith(".mdx")){
         let replacedSrc = await fs.readFile(joinedPath, 'utf8')
         for (const [key, value] of Object.entries(allProperties)) {
           core.debug(`${key}: ${value}`);
