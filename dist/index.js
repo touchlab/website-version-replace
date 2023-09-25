@@ -3216,15 +3216,17 @@ async function processDir(basePath, allProperties) {
     const dirFiles = await promises_1.default.readdir(basePath, { withFileTypes: true });
     for (const entryPath of dirFiles) {
         const joinedPath = path.join(basePath, entryPath.name);
+        core.debug(`Processing ${joinedPath}`);
         if (entryPath.isDirectory()) {
-            processDir(joinedPath, allProperties);
+            await processDir(joinedPath, allProperties);
         }
         else {
             if (entryPath.path.endsWith(".md") || entryPath.path.endsWith(".mdx")) {
-                const src = await promises_1.default.readFile(joinedPath, 'utf8');
-                let replacedSrc = src;
+                let replacedSrc = await promises_1.default.readFile(joinedPath, 'utf8');
                 for (const [key, value] of Object.entries(allProperties)) {
-                    console.log(`${key}: ${value}`);
+                    core.debug(`${key}: ${value}`);
+                    const keyReplace = '{{' + key + '}}';
+                    core.debug(`string found ${replacedSrc.includes(keyReplace)}`);
                     replacedSrc = replacedSrc.replaceAll(`{{${key}}}`, `${value}`);
                 }
                 await promises_1.default.writeFile(joinedPath, replacedSrc, 'utf8');

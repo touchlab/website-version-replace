@@ -26,14 +26,20 @@ async function processDir(basePath: string, allProperties: Tree) {
   for (const entryPath of dirFiles) {
     const joinedPath = path.join(basePath, entryPath.name)
 
+    core.debug(`Processing ${joinedPath}`)
+
     if(entryPath.isDirectory()){
-      processDir(joinedPath, allProperties)
+      await processDir(joinedPath, allProperties)
     }else {
       if(entryPath.path.endsWith(".md") || entryPath.path.endsWith(".mdx")){
-        const src = await fs.readFile(joinedPath, 'utf8')
-        let replacedSrc = src
+        let replacedSrc = await fs.readFile(joinedPath, 'utf8')
         for (const [key, value] of Object.entries(allProperties)) {
-          console.log(`${key}: ${value}`);
+          core.debug(`${key}: ${value}`);
+
+          const keyReplace = '{{'+ key +'}}'
+
+          core.debug(`string found ${replacedSrc.includes(keyReplace)}`)
+
           replacedSrc = replacedSrc.replaceAll(`{{${key}}}`, `${value}`)
         }
         await fs.writeFile(joinedPath, replacedSrc, 'utf8')
