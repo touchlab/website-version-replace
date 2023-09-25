@@ -1796,6 +1796,441 @@ function isLoopbackAddress(host) {
 
 /***/ }),
 
+/***/ 73:
+/***/ ((module) => {
+
+class Node {
+  constructor(type, range) {
+    this.type = type
+    if (range) this.range = range
+  }
+}
+
+class Pair extends Node {
+  constructor(key, value, range) {
+    super('PAIR', range)
+    this.key = key
+    this.value = value
+  }
+
+  separator(src) {
+    if (Array.isArray(this.range) && this.range.length >= 3) {
+      // eslint-disable-next-line no-unused-vars
+      const [_, start, end] = this.range
+      return src.slice(start, end)
+    }
+    return null
+  }
+}
+
+class Comment extends Node {
+  constructor(comment, range) {
+    super('COMMENT', range)
+    this.comment = comment
+  }
+}
+
+class EmptyLine extends Node {
+  constructor(range) {
+    super('EMPTY_LINE', range)
+  }
+}
+
+module.exports = { Node, Pair, Comment, EmptyLine }
+
+
+/***/ }),
+
+/***/ 412:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { Node, Pair, Comment, EmptyLine } = __nccwpck_require__(73)
+const { parse, parseLines } = __nccwpck_require__(732)
+const { stringify } = __nccwpck_require__(249)
+
+module.exports = {
+  Node,
+  Pair,
+  Comment,
+  EmptyLine,
+  parse,
+  parseLines,
+  stringify
+}
+
+
+/***/ }),
+
+/***/ 732:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { Pair, Comment, EmptyLine } = __nccwpck_require__(73)
+
+const atComment = (src, offset) => {
+  const ch = src[offset]
+  return ch === '#' || ch === '!'
+}
+
+const atLineEnd = (src, offset) => {
+  const ch = src[offset]
+  return !ch || ch === '\r' || ch === '\n'
+}
+
+const endOfIndent = (src, offset) => {
+  let ch = src[offset]
+  while (ch === '\t' || ch === '\f' || ch === ' ') {
+    offset += 1
+    ch = src[offset]
+  }
+  return offset
+}
+
+const endOfComment = (src, offset) => {
+  let ch = src[offset]
+  while (ch && ch !== '\r' && ch !== '\n') {
+    offset += 1
+    ch = src[offset]
+  }
+  return offset
+}
+
+const endOfKey = (src, offset) => {
+  let ch = src[offset]
+  while (
+    ch &&
+    ch !== '\r' &&
+    ch !== '\n' &&
+    ch !== '\t' &&
+    ch !== '\f' &&
+    ch !== ' ' &&
+    ch !== ':' &&
+    ch !== '='
+  ) {
+    if (ch === '\\') {
+      if (src[offset + 1] === '\n') {
+        offset = endOfIndent(src, offset + 2)
+      } else {
+        offset += 2
+      }
+    } else {
+      offset += 1
+    }
+    ch = src[offset]
+  }
+  return offset
+}
+
+const endOfSeparator = (src, offset) => {
+  let ch = src[offset]
+  let hasEqSign = false
+  loop: while (
+    ch === '\t' ||
+    ch === '\f' ||
+    ch === ' ' ||
+    ch === '=' ||
+    ch === ':' ||
+    ch === '\\'
+  ) {
+    switch (ch) {
+      case '\\':
+        if (src[offset + 1] !== '\n') break loop
+        offset = endOfIndent(src, offset + 2)
+        break
+      case '=':
+      case ':':
+        if (hasEqSign) break loop
+        hasEqSign = true
+      // fallthrough
+      default:
+        offset += 1
+    }
+    ch = src[offset]
+  }
+  return offset
+}
+
+const endOfValue = (src, offset) => {
+  let ch = src[offset]
+  while (ch && ch !== '\r' && ch !== '\n') {
+    offset += ch === '\\' ? 2 : 1
+    ch = src[offset]
+    if (ch === '\n' && src[offset - 1] === '\r') {
+      // escaped CRLF line terminator
+      offset += 1
+      ch = src[offset]
+    }
+  }
+  return offset
+}
+
+const unescape = str =>
+  str.replace(/\\(u[0-9a-fA-F]{4}|\r?\n[ \t\f]*|.)?/g, (match, code) => {
+    switch (code && code[0]) {
+      case 'f':
+        return '\f'
+      case 'n':
+        return '\n'
+      case 'r':
+        return '\r'
+      case 't':
+        return '\t'
+      case 'u': {
+        const c = parseInt(code.substr(1), 16)
+        return isNaN(c) ? code : String.fromCharCode(c)
+      }
+      case '\r':
+      case '\n':
+      case undefined:
+        return ''
+      default:
+        return code
+    }
+  })
+
+function parseLines(src, ast) {
+  const lines = []
+  for (let i = 0; i < src.length; ++i) {
+    if (src[i] === '\n' && src[i - 1] === '\r') i += 1
+    if (!src[i]) break
+    const keyStart = endOfIndent(src, i)
+    if (atLineEnd(src, keyStart)) {
+      lines.push(ast ? new EmptyLine([i, keyStart]) : '')
+      i = keyStart
+      continue
+    }
+    if (atComment(src, keyStart)) {
+      const commentEnd = endOfComment(src, keyStart)
+      const comment = src.slice(keyStart, commentEnd)
+      lines.push(ast ? new Comment(comment, [keyStart, commentEnd]) : comment)
+      i = commentEnd
+      continue
+    }
+    const keyEnd = endOfKey(src, keyStart)
+    const key = unescape(src.slice(keyStart, keyEnd))
+    const valueStart = endOfSeparator(src, keyEnd)
+    if (atLineEnd(src, valueStart)) {
+      lines.push(
+        ast
+          ? new Pair(key, '', [keyStart, keyEnd, valueStart, valueStart])
+          : [key, '']
+      )
+      i = valueStart
+      continue
+    }
+    const valueEnd = endOfValue(src, valueStart)
+    const value = unescape(src.slice(valueStart, valueEnd))
+    lines.push(
+      ast
+        ? new Pair(key, value, [keyStart, keyEnd, valueStart, valueEnd])
+        : [key, value]
+    )
+    i = valueEnd
+  }
+  return lines
+}
+
+function addPair(res, key, value, pathSep) {
+  if (!pathSep) {
+    res[key] = value
+    return
+  }
+
+  const keyPath = key.split(pathSep)
+  let parent = res
+  while (keyPath.length >= 2) {
+    const p = keyPath.shift()
+    if (!parent[p]) {
+      parent[p] = {}
+    } else if (typeof parent[p] !== 'object') {
+      parent[p] = { '': parent[p] }
+    }
+    parent = parent[p]
+  }
+  const leaf = keyPath[0]
+  if (typeof parent[leaf] === 'object') {
+    parent[leaf][''] = value
+  } else {
+    parent[leaf] = value
+  }
+}
+
+function parse(src, path) {
+  const pathSep = path ? (typeof path === 'string' ? path : '.') : null
+  const lines = Array.isArray(src) ? src : parseLines(src, false)
+  const res = {}
+  for (const line of lines) {
+    if (line instanceof Pair) addPair(res, line.key, line.value, pathSep)
+    else if (Array.isArray(line)) addPair(res, line[0], line[1], pathSep)
+  }
+  return res
+}
+
+module.exports = { parse, parseLines }
+
+
+/***/ }),
+
+/***/ 249:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { Pair, Comment, EmptyLine } = __nccwpck_require__(73)
+
+const escapeNonPrintable = (str, latin1) => {
+  const re =
+    latin1 !== false ? /[^\t\n\f\r -~\xa1-\xff]/g : /[\0-\b\v\x0e-\x1f]/g
+  return String(str).replace(re, ch => {
+    const esc = ch.charCodeAt(0).toString(16)
+    return '\\u' + ('0000' + esc).slice(-4)
+  })
+}
+
+const escape = str =>
+  String(str)
+    .replace(/\\/g, '\\\\')
+    .replace(/\f/g, '\\f')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')
+
+const pairWithSeparator = (key, value, sep) =>
+  escape(key).replace(/[ =:]/g, '\\$&') +
+  sep +
+  escape(value).replace(/^ /, '\\ ')
+
+const commentWithPrefix = (str, prefix) =>
+  str.replace(/^\s*([#!][ \t\f]*)?/g, prefix)
+
+const getFold = ({ indent, latin1, lineWidth, newline }) => line => {
+  if (!lineWidth || lineWidth < 0) return line
+  line = escapeNonPrintable(line, latin1)
+  let start = 0
+  let split = undefined
+  for (let i = 0, ch = line[0]; ch; ch = line[(i += 1)]) {
+    let end = i - start >= lineWidth ? split || i : undefined
+    if (!end) {
+      switch (ch) {
+        case '\r':
+          if (line[i + 1] === '\n') i += 1
+        // fallthrough
+        case '\n':
+          end = i + 1
+          break
+        case '\\':
+          i += 1
+          switch (line[i]) {
+            case 'r':
+              if (line[i + 1] === '\\' && line[i + 2] === 'n') i += 2
+            // fallthrough
+            case 'n':
+              end = i + 1
+              break
+            case ' ':
+            case 'f':
+            case 't':
+              split = i + 1
+              break
+          }
+          break
+        case '\f':
+        case '\t':
+        case ' ':
+        case '.':
+          split = i + 1
+          break
+      }
+    }
+    if (end) {
+      let lineEnd = end
+      let ch = line[lineEnd - 1]
+      while (ch === '\n' || ch === '\r') {
+        lineEnd -= 1
+        ch = line[lineEnd - 1]
+      }
+      const next = line[end]
+      const atWhitespace = next === '\t' || next === '\f' || next === ' '
+      line =
+        line.slice(0, lineEnd) +
+        newline +
+        indent +
+        (atWhitespace ? '\\' : '') +
+        line.slice(end)
+      start = lineEnd + newline.length
+      split = undefined
+      i = start + indent.length - 1
+    }
+  }
+  return line
+}
+
+const toLines = (obj, pathSep, defaultKey, prefix = '') => {
+  return Object.keys(obj).reduce((lines, key) => {
+    const value = obj[key]
+    if (value && typeof value === 'object') {
+      return lines.concat(
+        toLines(value, pathSep, defaultKey, prefix + key + pathSep)
+      )
+    } else {
+      const k =
+        key === defaultKey ? prefix.slice(0, -pathSep.length) : prefix + key
+      lines.push([k, value])
+      return lines
+    }
+  }, [])
+}
+
+function stringify(
+  input,
+  {
+    commentPrefix = '# ',
+    defaultKey = '',
+    indent = '    ',
+    keySep = ' = ',
+    latin1 = true,
+    lineWidth = 80,
+    newline = '\n',
+    pathSep = '.'
+  } = {}
+) {
+  if (!input) return ''
+  if (!Array.isArray(input)) input = toLines(input, pathSep, defaultKey)
+  const foldLine = getFold({
+    indent,
+    latin1,
+    lineWidth,
+    newline: '\\' + newline
+  })
+  const foldComment = getFold({
+    indent: commentPrefix,
+    latin1,
+    lineWidth,
+    newline
+  })
+  return input
+    .map(line => {
+      switch (true) {
+        case !line:
+        case line instanceof EmptyLine:
+          return ''
+
+        case Array.isArray(line):
+          return foldLine(pairWithSeparator(line[0], line[1], keySep))
+        case line instanceof Pair:
+          return foldLine(pairWithSeparator(line.key, line.value, keySep))
+
+        case line instanceof Comment:
+          return foldComment(commentWithPrefix(line.comment, commentPrefix))
+        default:
+          return foldComment(commentWithPrefix(String(line), commentPrefix))
+      }
+    })
+    .join(newline)
+}
+
+module.exports = { stringify }
+
+
+/***/ }),
+
 /***/ 294:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -2750,25 +3185,25 @@ var __importStar = (this && this.__importStar) || function (mod) {
     __setModuleDefault(result, mod);
     return result;
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = void 0;
 const core = __importStar(__nccwpck_require__(186));
-const wait_1 = __nccwpck_require__(259);
+const promises_1 = __importDefault(__nccwpck_require__(292));
+const dot_properties_1 = __nccwpck_require__(412);
+const path = __importStar(__nccwpck_require__(17));
 /**
  * The main function for the action.
  * @returns {Promise<void>} Resolves when the action is complete.
  */
 async function run() {
     try {
-        const ms = core.getInput('milliseconds');
-        // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-        core.debug(`Waiting ${ms} milliseconds ...`);
-        // Log the current timestamp, wait, then log the new timestamp
-        core.debug(new Date().toTimeString());
-        await (0, wait_1.wait)(parseInt(ms, 10));
-        core.debug(new Date().toTimeString());
-        // Set outputs for other workflow steps to use
-        core.setOutput('time', new Date().toTimeString());
+        const file = core.getInput('file');
+        const src = await promises_1.default.readFile(file, 'utf8');
+        const allProperties = (0, dot_properties_1.parse)(src);
+        await processDir(".", allProperties);
     }
     catch (error) {
         // Fail the workflow run if an error occurs
@@ -2777,31 +3212,26 @@ async function run() {
     }
 }
 exports.run = run;
-
-
-/***/ }),
-
-/***/ 259:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.wait = void 0;
-/**
- * Wait for a number of milliseconds.
- * @param milliseconds The number of milliseconds to wait.
- * @returns {Promise<string>} Resolves with 'done!' after the wait is over.
- */
-async function wait(milliseconds) {
-    return new Promise(resolve => {
-        if (isNaN(milliseconds)) {
-            throw new Error('milliseconds not a number');
+async function processDir(basePath, allProperties) {
+    const dirFiles = await promises_1.default.readdir(basePath, { withFileTypes: true });
+    for (const entryPath of dirFiles) {
+        const joinedPath = path.join(basePath, entryPath.name);
+        if (entryPath.isDirectory()) {
+            processDir(joinedPath, allProperties);
         }
-        setTimeout(() => resolve('done!'), milliseconds);
-    });
+        else {
+            if (entryPath.path.endsWith(".md") || entryPath.path.endsWith(".mdx")) {
+                const src = await promises_1.default.readFile(joinedPath, 'utf8');
+                let replacedSrc = src;
+                for (const [key, value] of Object.entries(allProperties)) {
+                    console.log(`${key}: ${value}`);
+                    replacedSrc = replacedSrc.replaceAll(`{{${key}}}`, `${value}`);
+                }
+                await promises_1.default.writeFile(joinedPath, replacedSrc, 'utf8');
+            }
+        }
+    }
 }
-exports.wait = wait;
 
 
 /***/ }),
@@ -2835,6 +3265,14 @@ module.exports = require("events");
 
 "use strict";
 module.exports = require("fs");
+
+/***/ }),
+
+/***/ 292:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("fs/promises");
 
 /***/ }),
 

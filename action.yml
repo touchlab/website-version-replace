@@ -4,15 +4,9 @@ author: 'Your name or organization here'
 
 # Define your inputs here.
 inputs:
-  milliseconds:
-    description: 'Your input description here'
+  file:
+    description: 'The properties file path'
     required: true
-    default: '1000'
-
-# Define your outputs here.
-outputs:
-  time:
-    description: 'Your output description here'
 
 runs:
   using: node20

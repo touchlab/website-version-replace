@@ -1,5 +1,7 @@
 import * as core from '@actions/core'
-import { wait } from './wait'
+import fs from "fs/promises";
+import {parse, Tree} from "dot-properties";
+import * as path from "path";
 
 /**
  * The main function for the action.
@@ -7,20 +9,35 @@ import { wait } from './wait'
  */
 export async function run(): Promise<void> {
   try {
-    const ms: string = core.getInput('milliseconds')
+    const file: string = core.getInput('file')
+    const src = await fs.readFile(file, 'utf8')
 
-    // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-    core.debug(`Waiting ${ms} milliseconds ...`)
+    const allProperties = parse(src)
 
-    // Log the current timestamp, wait, then log the new timestamp
-    core.debug(new Date().toTimeString())
-    await wait(parseInt(ms, 10))
-    core.debug(new Date().toTimeString())
-
-    // Set outputs for other workflow steps to use
-    core.setOutput('time', new Date().toTimeString())
+    await processDir(".", allProperties)
   } catch (error) {
     // Fail the workflow run if an error occurs
     if (error instanceof Error) core.setFailed(error.message)
+  }
+}
+
+async function processDir(basePath: string, allProperties: Tree) {
+  const dirFiles = await fs.readdir(basePath, { withFileTypes: true })
+  for (const entryPath of dirFiles) {
+    const joinedPath = path.join(basePath, entryPath.name)
+
+    if(entryPath.isDirectory()){
+      processDir(joinedPath, allProperties)
+    }else {
+      if(entryPath.path.endsWith(".md") || entryPath.path.endsWith(".mdx")){
+        const src = await fs.readFile(joinedPath, 'utf8')
+        let replacedSrc = src
+        for (const [key, value] of Object.entries(allProperties)) {
+          console.log(`${key}: ${value}`);
+          replacedSrc = replacedSrc.replaceAll(`{{${key}}}`, `${value}`)
+        }
+        await fs.writeFile(joinedPath, replacedSrc, 'utf8')
+      }
+    }
   }
 }
