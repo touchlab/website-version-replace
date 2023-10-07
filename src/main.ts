@@ -31,8 +31,15 @@ async function processDir(basePath: string, allProperties: Tree) {
     if(entryPath.isDirectory()){
       await processDir(joinedPath, allProperties)
     }else {
+      if(allProperties["ASTRO_ORIGIN"] && joinedPath.endsWith("config.mjs")){
+        // origin: 'https://touchlab.co',
+        const originalSrc = await fs.readFile(joinedPath, 'utf8')
+        let replacedSrc = originalSrc.replaceAll('origin: \'https://touchlab.co\',', `origin: '${allProperties["ASTRO_ORIGIN"]}',`)
+        await fs.writeFile(joinedPath, replacedSrc, 'utf8')
+      }
       if(joinedPath.endsWith(".md") || joinedPath.endsWith(".mdx")){
-        let replacedSrc = await fs.readFile(joinedPath, 'utf8')
+        const originalSrc = await fs.readFile(joinedPath, 'utf8')
+        let replacedSrc = originalSrc
         for (const [key, value] of Object.entries(allProperties)) {
           core.debug(`${key}: ${value}`);
 
@@ -42,7 +49,9 @@ async function processDir(basePath: string, allProperties: Tree) {
 
           replacedSrc = replacedSrc.replaceAll(`{{${key}}}`, `${value}`)
         }
-        await fs.writeFile(joinedPath, replacedSrc, 'utf8')
+        if(originalSrc !== replacedSrc) {
+          await fs.writeFile(joinedPath, replacedSrc, 'utf8')
+        }
       }
     }
   }

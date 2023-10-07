@@ -3221,15 +3221,24 @@ async function processDir(basePath, allProperties) {
             await processDir(joinedPath, allProperties);
         }
         else {
+            if (allProperties["ASTRO_ORIGIN"] && joinedPath.endsWith("config.mjs")) {
+                // origin: 'https://touchlab.co',
+                const originalSrc = await promises_1.default.readFile(joinedPath, 'utf8');
+                let replacedSrc = originalSrc.replaceAll('origin: \'https://touchlab.co\',', `origin: '${allProperties["ASTRO_ORIGIN"]}',`);
+                await promises_1.default.writeFile(joinedPath, replacedSrc, 'utf8');
+            }
             if (joinedPath.endsWith(".md") || joinedPath.endsWith(".mdx")) {
-                let replacedSrc = await promises_1.default.readFile(joinedPath, 'utf8');
+                const originalSrc = await promises_1.default.readFile(joinedPath, 'utf8');
+                let replacedSrc = originalSrc;
                 for (const [key, value] of Object.entries(allProperties)) {
                     core.debug(`${key}: ${value}`);
                     const keyReplace = '{{' + key + '}}';
                     core.debug(`string found ${replacedSrc.includes(keyReplace)}`);
                     replacedSrc = replacedSrc.replaceAll(`{{${key}}}`, `${value}`);
                 }
-                await promises_1.default.writeFile(joinedPath, replacedSrc, 'utf8');
+                if (originalSrc !== replacedSrc) {
+                    await promises_1.default.writeFile(joinedPath, replacedSrc, 'utf8');
+                }
             }
         }
     }
